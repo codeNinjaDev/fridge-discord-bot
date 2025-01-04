@@ -19,6 +19,7 @@ type FoodInfo struct {
 	Fridge          StorageInfo       `json:"fridge" gorm:"embedded;embeddedPrefix:fridge_"`
 	FoodEmoji       string            `json:"food_emoji"`
 	UserId          string            `json:"-" gorm:"index"`
+	ImageUrl        string            `json:"-"`
 }
 
 // StorageInfo struct for room and fridge info

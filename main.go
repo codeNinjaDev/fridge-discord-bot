@@ -42,6 +42,10 @@ func main() {
 
 	// Register a message handler
 	dg.AddHandler(messageHandler)
+	dg.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		// Pass the interaction to the global handler
+		HandleInteraction(s, i)
+	})
 
 	// Open a websocket connection to Discord
 	err = dg.Open()
@@ -112,7 +116,7 @@ func init() {
 				if err != nil {
 					log.Error("Error sending typing indicator: %v", err)
 				}
-				markdown, info, err := ProcessAttachment(ctx, s, m, model, attachment)
+				_, embed, info, err := ProcessSingleFood(ctx, model, attachment)
 				if err != nil {
 					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
 				} else {
@@ -123,7 +127,7 @@ func init() {
 						log.Error("Error creating food entry in db: %v", err)
 						return
 					}
-					s.ChannelMessageSend(m.ChannelID, markdown)
+					s.ChannelMessageSendEmbed(m.ChannelID, embed)
 				}
 			}
 		} else {
@@ -139,11 +143,11 @@ func init() {
 				if err != nil {
 					log.Error("Error sending typing indicator: %v", err)
 				}
-				markdown, _, err := ProcessAttachment(ctx, s, m, model, attachment)
+				_, embed, _, err := ProcessSingleFood(ctx, model, attachment)
 				if err != nil {
 					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
 				} else {
-					s.ChannelMessageSend(m.ChannelID, markdown)
+					s.ChannelMessageSendEmbed(m.ChannelID, embed)
 				}
 			}
 		} else {
@@ -153,18 +157,89 @@ func init() {
 
 	newCommand("!get", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 		foods, err := food_db.GetAllFoods(m.Author.ID)
+		var embeds []*discordgo.MessageEmbed
 		if err != nil {
 			s.ChannelMessageSend(m.ChannelID, "Failed to get foods 😢")
 		}
 		for _, food := range foods {
-			markdown, err := PrettyMarkdownResponse(food)
+			// markdown, err := PrettyMarkdownResponse(food)
+			// if err != nil {
+			// 	log.Error("Could not get food: %v", err)
+			// }
+			// s.ChannelMessageSend(m.ChannelID, markdown)
+
+			embed, err := CreateFoodEmbed(food)
 			if err != nil {
 				log.Error("Could not get food: %v", err)
+			} else {
+				embeds = append(embeds, embed)
 			}
-			s.ChannelMessageSend(m.ChannelID, markdown)
+		}
 
+		slider, err := NewSlider(s, m.ChannelID, embeds)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to get foods 😢")
+		} else {
+			slider.Send()
 		}
 	}).setHelp("Queries food").add()
+
+	newCommand("!askall", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		if len(m.Attachments) > 0 {
+			for _, attachment := range m.Attachments {
+
+				err := s.ChannelTyping(m.ChannelID)
+				if err != nil {
+					log.Error("Error sending typing indicator: %v", err)
+				}
+				_, embeds, _, err := ProcessMultipleFoods(ctx, model, attachment)
+				if err != nil {
+					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
+				} else {
+					slider, err := NewSlider(s, m.ChannelID, embeds)
+					if err != nil {
+						s.ChannelMessageSend(m.ChannelID, "Failed to make slider")
+					} else {
+						slider.Send()
+					}
+				}
+			}
+		} else {
+			fmt.Println("No attachments in the message.")
+		}
+	}).setHelp("Looks for all food in the image").add()
+
+	newCommand("!scanall", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		if len(m.Attachments) > 0 {
+			for _, attachment := range m.Attachments {
+
+				err := s.ChannelTyping(m.ChannelID)
+				if err != nil {
+					log.Error("Error sending typing indicator: %v", err)
+				}
+				_, embeds, foods, err := ProcessMultipleFoods(ctx, model, attachment)
+				if err != nil {
+					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
+				} else {
+					for _, food := range foods {
+						food.UserId = m.Author.ID
+						err := food_db.CreateFood(&food)
+						if err != nil {
+							log.Error("Error creating food entry in db: %v", err)
+						}
+					}
+					slider, err := NewSlider(s, m.ChannelID, embeds)
+					if err != nil {
+						s.ChannelMessageSend(m.ChannelID, "Failed to make slider")
+					} else {
+						slider.Send()
+					}
+				}
+			}
+		} else {
+			fmt.Println("No attachments in the message.")
+		}
+	}).setHelp("Looks for all food in the image").add()
 
 	newCommand("!clearall", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 		foods, err := food_db.GetAllFoods(m.Author.ID)
@@ -184,29 +259,77 @@ func init() {
 	}).setHelp("Queries food").add()
 }
 
-func ProcessAttachment(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment) (string, *FoodInfo, error) {
+func ProcessSingleFood(ctx context.Context, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment) (string, *discordgo.MessageEmbed, *FoodInfo, error) {
 	if strings.HasPrefix(attachment.ContentType, "image/") {
 		fmt.Printf("Attachment is an image: <%s>\n", attachment.URL)
 		extension := filepath.Ext(attachment.Filename)
 
-		result, err := generateContent(ctx, model, attachment.URL, extension)
+		result, err := generateFoodString(ctx, model, attachment.URL, extension)
 		if result != "" {
-			info, err := MarshalFood(result)
+			info, err := UnmarshalFood(result)
 			if err != nil {
 				log.Error("Error marshalling: %v", err)
 				log.Error("Raw result: %s", result)
-				return "", nil, err
+				return "", nil, nil, err
 			}
+			info.ImageUrl = attachment.URL
 			markdown, err := PrettyMarkdownResponse(*info)
 			if err != nil {
 				log.Error("Error parsing markdown: %v", err)
 				log.Error("Raw result: %s", result)
+				return "", nil, info, err
 			}
-			return markdown, info, err
+			embed, err := CreateFoodEmbed(*info)
+			return markdown, embed, info, err
 
 		} else {
 			log.Error("Failed to process image content: %v", err)
 		}
 	}
-	return "", nil, fmt.Errorf("Attachment is not an image: %v", attachment.URL)
+	return "", nil, nil, fmt.Errorf("attachment is not an image: %v", attachment.URL)
+}
+
+func ProcessMultipleFoods(ctx context.Context, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment) ([]string, []*discordgo.MessageEmbed, []FoodInfo, error) {
+	var markdowns []string
+	var foods []FoodInfo
+	var embeds []*discordgo.MessageEmbed
+	if strings.HasPrefix(attachment.ContentType, "image/") {
+		fmt.Printf("Attachment is an image: <%s>\n", attachment.URL)
+		extension := filepath.Ext(attachment.Filename)
+
+		result, err := generateAllFoodStrings(ctx, model, attachment.URL, extension)
+		if result != "" {
+			var err error
+			foods, err = UnmarshalFoods(result)
+			if err != nil {
+				log.Error("Error marshalling: %v", err)
+				log.Error("Raw result: %s", result)
+				return nil, nil, nil, err
+			}
+
+			for _, food := range foods {
+				food.ImageUrl = attachment.URL
+				markdown, err := PrettyMarkdownResponse(food)
+				if err != nil {
+					log.Error("Could not get food: %v", err)
+				} else {
+					markdowns = append(markdowns, markdown)
+
+				}
+				embed, err := CreateFoodEmbed(food)
+				if err != nil {
+					log.Error("Could not create embed for food: %v", err)
+				} else {
+					embeds = append(embeds, embed)
+				}
+
+			}
+
+			return markdowns, embeds, foods, err
+
+		} else {
+			log.Error("Failed to process image content: %v", err)
+		}
+	}
+	return markdowns, embeds, foods, fmt.Errorf("attachment is not an image: %v", attachment.URL)
 }

@@ -7,13 +7,21 @@ import (
 	"strings"
 )
 
-func MarshalFood(jsonString string) (*FoodInfo, error) {
+func UnmarshalFood(jsonString string) (*FoodInfo, error) {
 	var info FoodInfo
 	err := json.Unmarshal([]byte(jsonString), &info)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %w", err)
 	}
 	return &info, nil
+}
+func UnmarshalFoods(jsonString string) ([]FoodInfo, error) {
+	var info []FoodInfo
+	err := json.Unmarshal([]byte(jsonString), &info)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	return info, nil
 }
 
 // PrettyMarkdownResponse generates a Markdown representation of the food information.
