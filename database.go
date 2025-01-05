@@ -7,6 +7,17 @@ import (
 	"gorm.io/gorm"
 )
 
+type Recipe struct {
+	RecipeName          string   `json:"recipe_name"`          // Name of the dish
+	Description         string   `json:"description"`          // Brief description of the dish
+	NumberOfServings    string   `json:"number_of_servings"`   // Number of servings as string
+	Ingredients         []string `json:"ingredients"`          // List of (food items) ingredients with emoji
+	MissingIngredients  []string `json:"missing_ingredients"`  // Ingredients not available in fridge/pantry
+	CookingInstructions string   `json:"cooking_instructions"` // Markdown formatted cooking instructions
+	AdditionalSeasoning string   `json:"additional_seasoning"` // Markdown formatted suggestions for seasoning
+	MacroNutrients      []string `json:"macro_nutrients"`      // Macronutrient content list in grams
+}
+
 // FoodInfo struct with JSON serialization
 type FoodInfo struct {
 	gorm.Model
@@ -20,6 +31,7 @@ type FoodInfo struct {
 	FoodEmoji       string            `json:"food_emoji"`
 	UserId          string            `json:"-" gorm:"index"`
 	ImageUrl        string            `json:"-"`
+	Cost            string            `json:"cost"`
 }
 
 // StorageInfo struct for room and fridge info

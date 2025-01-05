@@ -184,6 +184,59 @@ func init() {
 		}
 	}).setHelp("Queries food").add()
 
+	newCommand("!makerecipe", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		foods, err := food_db.GetAllFoods(m.Author.ID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to get foods 😢")
+			return
+		}
+		var additional_query string
+		if len(args) > 1 {
+			additional_query = strings.Join(args[1:], " ")
+		} else {
+			additional_query = "there are no specific user preferences."
+		}
+		if s.ChannelTyping(m.ChannelID) != nil {
+			log.Error("Error sending typing indicator: %v", err)
+		}
+		embeds, err := ProcessRecipes(ctx, model, foods, additional_query)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to generate recipes 😢")
+		}
+
+		slider, err := NewSlider(s, m.ChannelID, embeds)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to get recipes 😢")
+		} else {
+			slider.Send()
+		}
+	}).setHelp("Suggest recipes").add()
+
+	newCommand("!receipt", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		if len(m.Attachments) > 0 {
+			for _, attachment := range m.Attachments {
+
+				err := s.ChannelTyping(m.ChannelID)
+				if err != nil {
+					log.Error("Error sending typing indicator: %v", err)
+				}
+				_, embeds, _, err := ProcessMultipleFoods(ctx, model, attachment, false)
+				if err != nil {
+					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
+				} else {
+					slider, err := NewSlider(s, m.ChannelID, embeds)
+					if err != nil {
+						s.ChannelMessageSend(m.ChannelID, "Failed to make slider")
+					} else {
+						slider.Send()
+					}
+				}
+			}
+		} else {
+			fmt.Println("No attachments in the message.")
+		}
+	}).setHelp("Looks for all food in the image").add()
+
 	newCommand("!askall", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
 		if len(m.Attachments) > 0 {
 			for _, attachment := range m.Attachments {
@@ -192,10 +245,42 @@ func init() {
 				if err != nil {
 					log.Error("Error sending typing indicator: %v", err)
 				}
-				_, embeds, _, err := ProcessMultipleFoods(ctx, model, attachment)
+				_, embeds, _, err := ProcessMultipleFoods(ctx, model, attachment, true)
 				if err != nil {
 					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
 				} else {
+					slider, err := NewSlider(s, m.ChannelID, embeds)
+					if err != nil {
+						s.ChannelMessageSend(m.ChannelID, "Failed to make slider")
+					} else {
+						slider.Send()
+					}
+				}
+			}
+		} else {
+			fmt.Println("No attachments in the message.")
+		}
+	}).setHelp("Looks for all food in the image").add()
+
+	newCommand("!scanreceipt", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		if len(m.Attachments) > 0 {
+			for _, attachment := range m.Attachments {
+
+				err := s.ChannelTyping(m.ChannelID)
+				if err != nil {
+					log.Error("Error sending typing indicator: %v", err)
+				}
+				_, embeds, foods, err := ProcessMultipleFoods(ctx, model, attachment, false)
+				if err != nil {
+					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
+				} else {
+					for _, food := range foods {
+						food.UserId = m.Author.ID
+						err := food_db.CreateFood(&food)
+						if err != nil {
+							log.Error("Error creating food entry in db: %v", err)
+						}
+					}
 					slider, err := NewSlider(s, m.ChannelID, embeds)
 					if err != nil {
 						s.ChannelMessageSend(m.ChannelID, "Failed to make slider")
@@ -217,7 +302,7 @@ func init() {
 				if err != nil {
 					log.Error("Error sending typing indicator: %v", err)
 				}
-				_, embeds, foods, err := ProcessMultipleFoods(ctx, model, attachment)
+				_, embeds, foods, err := ProcessMultipleFoods(ctx, model, attachment, true)
 				if err != nil {
 					s.ChannelMessageSend(m.ChannelID, "Failed to process image 😢")
 				} else {
@@ -257,6 +342,22 @@ func init() {
 		}
 		s.ChannelMessageSend(m.ChannelID, markdown.String())
 	}).setHelp("Queries food").add()
+
+	newCommand("!list", 0, false, func(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+		foods, err := food_db.GetAllFoods(m.Author.ID)
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to get foods 😢")
+		}
+
+		var markdown bytes.Buffer
+		markdown.WriteString("Listing foods: \n")
+		for _, food := range foods {
+			if err == nil {
+				markdown.WriteString(fmt.Sprintf("- %s\n", food.FoodItem))
+			}
+		}
+		s.ChannelMessageSend(m.ChannelID, markdown.String())
+	}).setHelp("Queries food").add()
 }
 
 func ProcessSingleFood(ctx context.Context, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment) (string, *discordgo.MessageEmbed, *FoodInfo, error) {
@@ -289,7 +390,7 @@ func ProcessSingleFood(ctx context.Context, model *genai.GenerativeModel, attach
 	return "", nil, nil, fmt.Errorf("attachment is not an image: %v", attachment.URL)
 }
 
-func ProcessMultipleFoods(ctx context.Context, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment) ([]string, []*discordgo.MessageEmbed, []FoodInfo, error) {
+func ProcessMultipleFoods(ctx context.Context, model *genai.GenerativeModel, attachment *discordgo.MessageAttachment, photo bool) ([]string, []*discordgo.MessageEmbed, []FoodInfo, error) {
 	var markdowns []string
 	var foods []FoodInfo
 	var embeds []*discordgo.MessageEmbed
@@ -297,7 +398,7 @@ func ProcessMultipleFoods(ctx context.Context, model *genai.GenerativeModel, att
 		fmt.Printf("Attachment is an image: <%s>\n", attachment.URL)
 		extension := filepath.Ext(attachment.Filename)
 
-		result, err := generateAllFoodStrings(ctx, model, attachment.URL, extension)
+		result, err := generateAllFoodStrings(ctx, model, attachment.URL, extension, false)
 		if result != "" {
 			var err error
 			foods, err = UnmarshalFoods(result)
@@ -332,4 +433,25 @@ func ProcessMultipleFoods(ctx context.Context, model *genai.GenerativeModel, att
 		}
 	}
 	return markdowns, embeds, foods, fmt.Errorf("attachment is not an image: %v", attachment.URL)
+}
+
+func ProcessRecipes(ctx context.Context, model *genai.GenerativeModel, foods []FoodInfo, additional_query string) ([]*discordgo.MessageEmbed, error) {
+	var embeds []*discordgo.MessageEmbed
+	recipesJson, err := generateRecipes(ctx, model, foods, additional_query)
+	if err != nil {
+		return embeds, err
+	}
+	recipes, err := UnmarshalRecipes(recipesJson)
+	if err != nil {
+		return embeds, err
+	}
+	for _, recipe := range recipes {
+		recipe_embed, err := CreateRecipeEmbed(recipe)
+		if err != nil {
+			log.Error(err.Error())
+		} else {
+			embeds = append(embeds, recipe_embed)
+		}
+	}
+	return embeds, nil
 }

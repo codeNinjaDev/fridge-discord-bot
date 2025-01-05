@@ -24,6 +24,15 @@ func UnmarshalFoods(jsonString string) ([]FoodInfo, error) {
 	return info, nil
 }
 
+func UnmarshalRecipes(jsonString string) ([]Recipe, error) {
+	var recipes []Recipe
+	err := json.Unmarshal([]byte(jsonString), &recipes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+	return recipes, nil
+}
+
 // PrettyMarkdownResponse generates a Markdown representation of the food information.
 func PrettyMarkdownResponse(info FoodInfo) (string, error) {
 	// Build the Markdown response

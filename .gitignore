@@ -2,3 +2,4 @@
 *.env
 .vscode
 go.sum
+__debug_*

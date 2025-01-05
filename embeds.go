@@ -194,3 +194,63 @@ func CreateFoodEmbed(info FoodInfo) (*discordgo.MessageEmbed, error) {
 	return &embed, nil
 
 }
+
+func CreateRecipeEmbed(recipe Recipe) (*discordgo.MessageEmbed, error) {
+
+	var builder strings.Builder
+	for _, nutrient := range recipe.MacroNutrients {
+		builder.WriteString(fmt.Sprintf(" - %s\n", nutrient))
+	}
+	nutritionFacts := builder.String()
+	builder.Reset()
+
+	for _, ingredient := range recipe.Ingredients {
+		builder.WriteString(fmt.Sprintf(" - %s\n", ingredient))
+	}
+	allIngredients := builder.String()
+
+	builder.Reset()
+	for _, ingredient := range recipe.MissingIngredients {
+		builder.WriteString(fmt.Sprintf(" - %s\n", ingredient))
+	}
+	missingIngredients := builder.String()
+	builder.Reset()
+
+	embed := discordgo.MessageEmbed{
+		Color:       0x00ff00, // green,
+		Description: recipe.Description,
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:   fmt.Sprintf("🍽️ Serves %s | Ingredients", recipe.NumberOfServings),
+				Value:  allIngredients,
+				Inline: true,
+			},
+			{
+				Name:   "Missing ingredients",
+				Value:  missingIngredients,
+				Inline: true,
+			},
+			{
+				Name:   "Cooking Instructions",
+				Value:  recipe.CookingInstructions,
+				Inline: false,
+			},
+			{
+				Name:   "Additional seasoning",
+				Value:  recipe.AdditionalSeasoning,
+				Inline: false,
+			},
+			{
+				Name:   "Macronutrients",
+				Value:  nutritionFacts,
+				Inline: false,
+			},
+		},
+		Thumbnail: &discordgo.MessageEmbedThumbnail{
+			URL: "https://media.discordapp.net/attachments/740596566632562763/1325175644346388530/file-WF56sz777XLvWwNMFRGaBs.png?ex=677ad57e&is=677983fe&hm=dc54f362fa2f7c1efb4b54b7fc2b515a7061487c531b33538763d47e901123bd&=&format=webp&quality=lossless&width=840&height=840",
+		},
+		Title: fmt.Sprintf("Recipe: %s", recipe.RecipeName),
+	}
+	return &embed, nil
+
+}
